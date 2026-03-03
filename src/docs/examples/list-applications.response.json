@@ -1,0 +1,20 @@
+{
+  "success": true,
+  "data": [
+    {
+      "_id": "69a627d455f1a9a4581671b8",
+      "applicantName": "Test User",
+      "applicantEmail": "test@example.com",
+      "originInstitution": "Institución A",
+      "targetInstitution": "Institución B",
+      "status": "DRAFT",
+      "createdAt": "2026-03-02T00:00:00.000Z"
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 10,
+    "total": 1,
+    "pages": 1
+  }
+}
