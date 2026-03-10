@@ -4,6 +4,11 @@ const STATUS = ["DRAFT", "SUBMITTED", "IN_REVIEW", "APPROVED", "REJECTED"];
 
 const applicationSchema = new mongoose.Schema(
   {
+    // ✅ Campos de migración / trazabilidad
+    externalId: { type: String, trim: true, index: true, sparse: true },
+    importBatchId: { type: String, trim: true, index: true },
+    importSource: { type: String, trim: true },
+
     applicantName: { type: String, required: true, trim: true, maxlength: 120 },
     applicantEmail: { type: String, required: true, trim: true, lowercase: true, maxlength: 200 },
 

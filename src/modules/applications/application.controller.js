@@ -1,5 +1,6 @@
 const Application = require("./application.model");
 const { STATUS } = require("./application.model");
+const { applicationItemSchema } = require("./application.validation");
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || ""));
@@ -7,7 +8,7 @@ function isValidEmail(email) {
 
 async function createApplication(req, res, next) {
   try {
-    const body = req.validated?.body ?? req.body ?? {}; //  evita destructuring sobre undefined
+    const body = req.validated?.body ?? req.body ?? {}; // evita destructuring sobre undefined
 
     const {
       applicantName,
@@ -21,7 +22,7 @@ async function createApplication(req, res, next) {
       notes
     } = body;
 
-    // Validación mínima (luego lo pasamos a Zod/Joi)
+    // Validación mínima (Zod ya valida, esto es extra)
     if (!applicantName || !applicantEmail || !originInstitution || !targetInstitution) {
       return res.status(400).json({
         success: false,
@@ -103,9 +104,9 @@ async function getApplicationById(req, res, next) {
 
 async function updateStatus(req, res, next) {
   try {
-const { id } = req.params;
-const body = req.validated?.body ?? req.body ?? {};
-const { status } = body;
+    const { id } = req.params;
+    const body = req.validated?.body ?? req.body ?? {};
+    const { status } = body;
 
     if (!STATUS.includes(status)) {
       return res.status(400).json({
@@ -114,11 +115,7 @@ const { status } = body;
       });
     }
 
-    const app = await Application.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true }
-    );
+    const app = await Application.findByIdAndUpdate(id, { status }, { new: true });
 
     if (!app) return res.status(404).json({ success: false, message: "Application not found" });
 
@@ -128,9 +125,121 @@ const { status } = body;
   }
 }
 
+/**
+ * POST /api/applications/bulk
+ * Body (Opción B):
+ * {
+ *   "batchId": "historical-2024-backfill-001",
+ *   "source": "google-sheets",
+ *   "dryRun": true,
+ *   "mode": "insert",
+ *   "items": [ ... ]
+ * }
+ */
+async function bulkImportApplications(req, res, next) {
+  try {
+    const { batchId, source, dryRun, mode, items } = req.validated.body;
+
+    const validDocs = [];
+    const errors = [];
+
+    items.forEach((rawItem, index) => {
+      const parsed = applicationItemSchema.safeParse(rawItem);
+
+      if (!parsed.success) {
+        parsed.error.issues.forEach((i) => {
+          errors.push({
+            index,
+            field: i.path.join("."),
+            message: i.message
+          });
+        });
+        return;
+      }
+
+      // Reglas extra por modo
+      if (mode === "upsert" && !parsed.data.externalId) {
+        errors.push({
+          index,
+          field: "externalId",
+          message: "externalId is required when mode=upsert"
+        });
+        return;
+      }
+
+      validDocs.push({
+        ...parsed.data,
+        status: parsed.data.status ?? "DRAFT",
+        importBatchId: batchId,
+        importSource: source
+      });
+    });
+
+    // Dry-run: solo valida y reporta, no inserta
+    if (dryRun) {
+      return res.status(200).json({
+        success: true,
+        meta: {
+          batchId,
+          source: source ?? null,
+          mode,
+          dryRun: true,
+          received: items.length,
+          valid: validDocs.length,
+          invalid: items.length - validDocs.length,
+          inserted: 0
+        },
+        errors
+      });
+    }
+
+    // Insert implementado
+    if (mode === "insert") {
+      let insertedCount = 0;
+
+      if (validDocs.length > 0) {
+        try {
+          const inserted = await Application.insertMany(validDocs, { ordered: false });
+          insertedCount = inserted.length;
+        } catch (err) {
+          // Puede insertar parcial y luego lanzar error (duplicados, etc.)
+          errors.push({
+            index: null,
+            field: null,
+            message: err.message
+          });
+        }
+      }
+
+      return res.status(errors.length > 0 ? 207 : 201).json({
+        success: true,
+        meta: {
+          batchId,
+          source: source ?? null,
+          mode,
+          dryRun: false,
+          received: items.length,
+          inserted: insertedCount,
+          failed: items.length - insertedCount
+        },
+        errors
+      });
+    }
+
+    // Upsert lo dejamos para el siguiente commit
+    return res.status(400).json({
+      success: false,
+      message: "mode=upsert not implemented yet. Use mode=insert for now."
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   createApplication,
   listApplications,
   getApplicationById,
-  updateStatus
+  updateStatus,
+  bulkImportApplications
 };
